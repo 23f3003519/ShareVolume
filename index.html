@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Loading Company Data...</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-T3c6CoIi6uLrA9TneNEoa7RxnatzjcDSCmG1MXxSR1GAsXEV/Dwwykc2MPK8M2HN" crossorigin="anonymous">
+    <style>
+        body {
+            background-color: #f8f9fa;
+        }
+        .container {
+            max-width: 960px;
+            margin-top: 50px;
+        }
+        .card {
+            border: none;
+            border-radius: 0.75rem;
+        }
+        .card-title {
+            font-weight: 600;
+        }
+        .display-4 {
+            font-size: 3.5rem;
+            font-weight: 300;
+            line-height: 1.2;
+        }
+        #loading-spinner {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 200px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header class="text-center mb-5">
+            <h1 class="display-4 fw-bold" id="share-entity-name">Loading Company Data...</h1>
+            <p class="lead text-muted">Common Stock Shares Outstanding Overview</p>
+        </header>
+
+        <div id="loading-spinner">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+        </div>
+
+        <div id="content-container" class="row d-none">
+            <div class="col-md-6 mb-4">
+                <div class="card shadow-sm">
+                    <div class="card-body">
+                        <h5 class="card-title text-success">Highest Value</h5>
+                        <p class="card-text">
+                            <strong class="display-4" id="share-max-value"></strong>
+                            <span class="text-muted d-block">shares</span>
+                        </p>
+                        <p class="card-text">
+                            <small class="text-muted">Fiscal Year: <span id="share-max-fy"></span></small>
+                        </p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6 mb-4">
+                <div class="card shadow-sm">
+                    <div class="card-body">
+                        <h5 class="card-title text-danger">Lowest Value</h5>
+                        <p class="card-text">
+                            <strong class="display-4" id="share-min-value"></strong>
+                            <span class="text-muted d-block">shares</span>
+                        </p>
+                        <p class="card-text">
+                            <small class="text-muted">Fiscal Year: <span id="share-min-fy"></span></small>
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="error-message" class="alert alert-danger d-none" role="alert">
+            Failed to load company data. Please try again later or check the CIK.
+        </div>
+
+    </div>
+
+    <script>
+        async function fetchCompanyDataAndProcess(cik) {
+            const secApiUrl = `https://data.sec.gov/api/xbrl/companyconcept/CIK${cik}/dei/EntityCommonStockSharesOutstanding.json`;
+            // Use a CORS proxy for client-side fetches to the SEC API.
+            const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(secApiUrl)}`;
+            
+            const response = await fetch(proxyUrl); 
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status} for CIK ${cik}`);
+            }
+            const secData = await response.json();
+
+            const entityName = secData.entityName || "Unknown Entity";
+            const sharesData = secData.units?.shares || [];
+
+            const filteredShares = sharesData.filter(entry => {
+                const fy = parseInt(entry.fy);
+                const val = entry.val;
+                return !isNaN(fy) && fy > 2020 && typeof val === 'number';
+            });
+
+            if (filteredShares.length === 0) {
+                throw new Error("No relevant shares data found for the specified criteria.");
+            }
+
+            let maxEntry = filteredShares[0];
+            let minEntry = filteredShares[0];
+
+            for (const entry of filteredShares) {
+                if (entry.val > maxEntry.val) {
+                    maxEntry = entry;
+                }
+                if (entry.val < minEntry.val) {
+                    minEntry = entry;
+                }
+            }
+
+            return {
+                entityName: entityName,
+                max: {
+                    val: maxEntry.val,
+                    fy: String(maxEntry.fy)
+                },
+                min: {
+                    val: minEntry.val,
+                    fy: String(minEntry.fy)
+                }
+            };
+        }
+
+        function updatePage(data) {
+            document.title = `${data.entityName} - Common Stock Shares Outstanding`;
+            document.getElementById('share-entity-name').textContent = `${data.entityName} Common Stock Shares Outstanding`;
+            document.getElementById('share-max-value').textContent = data.max.val.toLocaleString();
+            document.getElementById('share-max-fy').textContent = data.max.fy;
+            document.getElementById('share-min-value').textContent = data.min.val.toLocaleString();
+            document.getElementById('share-min-fy').textContent = data.min.fy;
+        }
+
+        document.addEventListener('DOMContentLoaded', async () => {
+            const loadingSpinner = document.getElementById('loading-spinner');
+            const contentContainer = document.getElementById('content-container');
+            const errorMessage = document.getElementById('error-message');
+            const defaultCik = '0001037540'; // CIK for BXP, Inc.
+
+            loadingSpinner.classList.remove('d-none');
+            contentContainer.classList.add('d-none');
+            errorMessage.classList.add('d-none');
+
+            try {
+                const urlParams = new URLSearchParams(window.location.search);
+                const cikFromUrl = urlParams.get('CIK');
+                const targetCik = cikFromUrl || defaultCik;
+                
+                const data = await fetchCompanyDataAndProcess(targetCik);
+                
+                updatePage(data);
+                contentContainer.classList.remove('d-none');
+
+            } catch (error) {
+                console.error("Error loading data:", error);
+                errorMessage.textContent = `Failed to load company data: ${error.message}. Please check the CIK or try again later.`;
+                errorMessage.classList.remove('d-none');
+                document.title = "Error - Shares Outstanding";
+                document.getElementById('share-entity-name').textContent = "Error Loading Data";
+            } finally {
+                loadingSpinner.classList.add('d-none');
+            }
+        });
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js" integrity="sha384-C6RzsynM9kWDrMNeT87bh95OGNyZPhcTNXj1NW7RuBCsyN/o0jlpcV8Qyq46cDfL" crossorigin="anonymous"></script>
+</body>
+</html>
